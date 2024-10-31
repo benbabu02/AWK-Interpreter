@@ -1,543 +1,710 @@
-package csi404.assignment7;
-
+import java.util.ArrayList;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Optional;
 
+/*
+ * The Parser class which implements a Parse method
+ * which goes through the list of Token and calls
+ * ParseAction and ParseFunction. ParseAction checks
+ * for the keywords BEGIN and END and works with them.
+ * ParseFunction check if the format of a new function
+ * is written correctly.
+ *
+ * @author Benjamin Babu (bbabu@albany.edu)
+ */
 public class Parser {
     private TokenManager tokenManager;
 
-    public Parser(LinkedList<Token> inputTokens) {
-        this.tokenManager = new TokenManager(inputTokens);
+    public static class ProgramNode {
+        private List<BlockNode> beginBlockNodes;
+        private List<BlockNode> endBlockNodes;
+        private List<BlockNode> otherBlockNodes;
+        private List<FunctionDefinitionNode> functionNodes;
+
+        public ProgramNode () {
+            this.beginBlockNodes = new ArrayList<>();
+            this.endBlockNodes = new ArrayList<>();
+            this.otherBlockNodes = new ArrayList<>();
+            this.functionNodes = new ArrayList<>();
+        }
+
+        List<BlockNode> getBeginBlockNodes() { return beginBlockNodes; }
+
+        List<BlockNode> getEndBlockNodes() { return endBlockNodes; }
+
+        List<BlockNode> getOtherBlockNodes() { return otherBlockNodes; }
+
+        List<FunctionDefinitionNode> getFunctionNodes() { return functionNodes; }
+
+        void addFunctionNode(FunctionDefinitionNode functionDefinitionNode) {
+            functionNodes.add(functionDefinitionNode);
+        }
+
+
+        public String toString() {
+            return "Begin Nodes: " + beginBlockNodes + "\nEnd Nodes: " + endBlockNodes + "\nOther Nodes: " +
+                    otherBlockNodes + "\nFunction Nodes: " + functionNodes;
+        }
     }
 
+    public Parser(LinkedList<Token> inputTokens) { this.tokenManager = new TokenManager(inputTokens); }
+
+    // loops and deletes all seperator tokens from the beginning
     boolean AcceptSeperators() {
         int seperatorCount = 0;
         while (tokenManager.MoreTokens()) {
-            if (tokenManager.MatchAndRemove(Token.TokenType.NEWLINE).isEmpty()) {
-                return seperatorCount > 0;
-            }
+            if (tokenManager.MatchAndRemove(Token.TokenType.SEPERATOR).isEmpty()) { return seperatorCount > 0; }
             seperatorCount++;
         }
         return seperatorCount > 0;
     }
 
-    String[] Parse() throws Exception {
-        String[] result = new String[1024];
-        int count = 0;
-        while (count < 1024 && tokenManager.MoreTokens()) {
-            result[count] = ParseStatement();
-            count++;
+    ProgramNode Parse() throws Exception {
+        ProgramNode programNode = new ProgramNode();
+        while (tokenManager.MoreTokens()) {
+            if (!ParseFunction(programNode) && !ParseAction(programNode)) { throw new Exception("Syntax Error: Parser<Parse>"); }
         }
-        return result;
+        return programNode;
     }
 
-    String ParseStatement() throws Exception {
-        AcceptSeperators();
-        if (tokenManager.MatchAndRemove(Token.TokenType.MATH).isPresent()) {
-            return ParseMath();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.BRANCH).isPresent()) {
-            return ParseBranch();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.HALT).isPresent()) {
-            return ParseStatementHalt();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.COPY).isPresent()) {
-            return ParseStatementCopy();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.JUMP).isPresent()) {
-            return ParseJump();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.CALL).isPresent()) {
-            return ParseCall();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.PUSH).isPresent()) {
-            return ParsePush();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.POP).isPresent()) {
-            return ParsePop();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.LOAD).isPresent()) {
-            return ParseLoad();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.STORE).isPresent()) {
-            return ParseStore();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.RETURN).isPresent()) {
-            return ParseReturn();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.PEEK).isPresent()) {
-            return ParsePeek();
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.INTERRUPT).isPresent()) {
-            return ParseInterrupt();
-        }
-        return "";
-    }
+    boolean ParseFunction(ProgramNode programNode) throws Exception {
+        Optional<Token> tokenTemp;
+        LinkedList<String> parameters = new LinkedList<>();
+        String functionName;
+        if (!tokenManager.MoreTokens()) return false;
+        if (tokenManager.MatchAndRemove(Token.TokenType.FUNCTION).isPresent()) {
+            tokenTemp = tokenManager.MatchAndRemove(Token.TokenType.WORD);
+            if (tokenTemp.isPresent()) {
+                functionName = tokenTemp.get().getTokenValue();
+                if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+                    while (tokenManager.MoreTokens()) {
+                        if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) { break; }
+                        tokenTemp = tokenManager.MatchAndRemove(Token.TokenType.WORD);
+                        if (tokenTemp.isPresent()) {
+                            parameters.add(tokenTemp.get().getTokenValue());
+                            if (tokenManager.MatchAndRemove(Token.TokenType.COMMA).isPresent()) {
+                                AcceptSeperators();
+                            } else {
+                                if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                                    break;
+                                } else { return false; }
+                            }
+                        } else {
+                            if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isEmpty()) { return false; }
+                            break;
+                        }
+                    }
+                    AcceptSeperators();
 
-    String insertZeroInFront(String input, boolean flag, int num) {
-        String result = "";
-        for (int i = input.length(); i < num; i++) {
-            result += "0";
-        }
-        if (flag) {
-            return result + input;
-        } else {
-            return input + result;
-        }
-    }
-
-    String ParseMath() throws Exception {
-        AcceptSeperators();
-        // math  MATH ADD twoR | MATH ADD threeR  (( subtract, … are all the same)
-        String BinaryMOP = "";
-        BinaryMOP = ParseMOP(); // gets MOP binary representation
-        if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-            tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-            tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(2).isEmpty()) { // checks if its 2R
-            String[] Binary2R = ParseTwoR();
-            return insertZeroInFront(Binary2R[0] + BinaryMOP + Binary2R[1] + "00010", true, 32);
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                   tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                   tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(3).isEmpty()) { // checks if its 3R
-            String[] Binary3R = ParseThreeR();
-            return insertZeroInFront(Binary3R[0] + Binary3R[1] + BinaryMOP + Binary3R[2] + "00011", true, 32);
-        } else {
-            throw new Exception("ERROR: Invalid Math Operator in ParseMath");
-        }
-    }
-
-    String ParseMOP() throws Exception {
-        AcceptSeperators();
-        if (tokenManager.MatchAndRemove(Token.TokenType.AND).isPresent()) { // and
-            return "1000";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.OR).isPresent()) { // or
-            return "1001";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.XOR).isPresent()) { // xor
-            return "1010";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.NOT).isPresent()) { // not
-            return "1011";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.LEFT).isPresent()) { // left
-            return "1100";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.RIGHT).isPresent()) { // right
-            return "1101";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.ADD).isPresent()) { // add
-            return "1110";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.SUBTRACT).isPresent()) { // subtract
-            return "1111";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.MULTIPLY).isPresent()) { // multiply
-            return "0111";
-        } else { // invalid MOP
-            throw new Exception("ERROR: Invalid Mathematical Expression in ParseMOP");
-        }
-    }
-
-    String ParseBranch() throws Exception {
-        AcceptSeperators();
-        if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(1).isEmpty()) {
-            return ParseJump();
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(1).isEmpty()) {
-            return ParseJump();
-        } else if (tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(4).isPresent() && tokenManager.Peek(4).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(4).isEmpty()) {
-            String BinaryBOP = "";
-            BinaryBOP = ParseBOP(); // gets MOP binary representation
-            String[] Binary2R = ParseTwoR();
-            Optional<Token> number = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (number.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(number.get().getTokenValue()))), true, 13)
-                        + Binary2R[0] + BinaryBOP + Binary2R[1] + "00110";
-            } else {
-                throw new Exception("ERROR: Missing Number in ParseBranch 2R");
-            }
-        } else if (tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(4).isPresent() && tokenManager.Peek(4).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(4).isEmpty()) { // Branch - 3R (00111)
-            String BinaryBOP = "";
-            BinaryBOP = ParseBOP(); // gets MOP binary representation
-            String[] Binary3R = ParseTwoR();
-            Optional<Token> number = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (number.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(number.get().getTokenValue()))), true, 8)
-                        + Binary3R[0] + Binary3R[1] + BinaryBOP + "00000" + "00111";
-            } else {
-                throw new Exception("ERROR: Missing Number in ParseBranch 2R");
-            }
-        }
-        return "";
-    }
-
-    String ParseBOP() throws Exception {
-        if (tokenManager.MatchAndRemove(Token.TokenType.EQUAL).isPresent()) { // Equals (eq)
-            return "0000";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.UNEQUAL).isPresent()) { // Not Equal (neq)
-            return "0001";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.LESS).isPresent()) { // Less than (lt)
-            return "0010";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.GREATEROREQUAL).isPresent()) { // Greater than or equal (ge)
-            return "0011";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.GREATER).isPresent()) { // Greater than (gt)
-            return "0100";
-        } else if (tokenManager.MatchAndRemove(Token.TokenType.LESSOREQUAL).isPresent()) { // Less than or equal (le)
-            return "0101";
-        } else { // invalid BOP
-            throw new Exception("ERROR: Invalid Boolean Expression in ParseBOP");
-        }
-    }
-
-    String ParseStatementHalt() throws Exception {
-        AcceptSeperators();
-        return insertZeroInFront(ParseHalt(), true, 32);
-    }
-
-    String ParseStatementCopy() throws Exception {
-        AcceptSeperators();
-        String[] copy = ParseCopy();
-        return copy[1] + "0000" + copy[0] + "00001";
-    }
-
-    String ParseJump() throws Exception {
-        AcceptSeperators();
-        if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(1).isEmpty()) {
-            Optional<Token> number = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (number.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(number.get().getTokenValue()))) + "00100", true, 32);
-            } else {
-                throw new Exception("ERROR: Missing Number in ParseJump");
-            }
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(1).isEmpty()) {
-            Optional<Token> number = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (number.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(number.get().getTokenValue()))) + "00100", true, 32);
-            } else {
-                throw new Exception("ERROR: Missing Number in ParseJump");
-            }
-        } else {
-            throw new Exception("ERROR: Invalid Expression in ParseJump");
-        }
-    }
-
-    String ParseCall() throws Exception {
-        AcceptSeperators();
-        if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(1).isEmpty()) {
-            Optional<Token> number = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (number.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(number.get().getTokenValue()))) + "01000", true, 32);
-            } else {
-                throw new Exception("ERROR: Missing Number in ParseCall");
-            }
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(2).isEmpty()) {
-            String[] BinaryDestOnly = ParseDestOnly();
-            return insertZeroInFront(BinaryDestOnly[1]+ "0000" + BinaryDestOnly[0] + "01001", true, 32);
-        } else if (tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(4).isPresent() && tokenManager.Peek(4).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(4).isEmpty()) {
-            String BinaryBOP = "";
-            BinaryBOP = ParseBOP(); // gets MOP binary representation
-            String[] Binary2R = ParseTwoR();
-            Optional<Token> number = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (number.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(number.get().getTokenValue()))), true, 13)
-                        + Binary2R[0] + BinaryBOP + Binary2R[1] + "01010";
-            } else {
-                throw new Exception("ERROR: Missing Number in ParseCall 2R");
-            }
-        } else if (tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(4).isPresent() && tokenManager.Peek(4).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(5).isPresent() && tokenManager.Peek(5).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(5).isEmpty()) {
-            String BinaryBOP = "";
-            BinaryBOP = ParseBOP(); // gets MOP binary representation
-            String[] Binary3R = ParseThreeR();
-            Optional<Token> number = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (number.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(number.get().getTokenValue()))), true, 8)
-                        + Binary3R[0] + Binary3R[1] + BinaryBOP + Binary3R[2] + "01011";
-            } else {
-                throw new Exception("ERROR: Missing Number in ParseBranch 2R");
-            }
-        } else {
-            throw new Exception("ERROR: Invalid Expression in ParseCall");
-        }
-    }
-
-    String ParsePush() throws Exception {
-        AcceptSeperators();
-        String BinaryMOP = "";
-        BinaryMOP = ParseMOP(); // gets MOP binary representation
-        // Push - Dest Only (01101)
-        if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(2).isEmpty()) {
-            Optional<Token> register = tokenManager.MatchAndRemove(Token.TokenType.REGISTER);
-            if (register.isPresent()) {
-                Optional<Token> number = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-                if (number.isPresent()) {
-                    return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(number.get().getTokenValue())))
-                            + BinaryMOP +convertNumToFiveBitBinary(Integer.parseInt(register.get().getTokenValue()))
-                            + "01101", true, 32);
-                } else {
-                    throw new Exception("ERROR: Invalid Number in ParsePush");
-                }
-            } else {
-                throw new Exception("Error: Invalid Register in ParsePush");
-            }
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(2).isEmpty()) { // Push - 2R (01110)
-            String[] Binary2R = ParseTwoR();
-            return insertZeroInFront(Binary2R[0] + BinaryMOP + Binary2R[1] + "01110", true, 32);
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(2).isEmpty()) { // Push - 3R (01111)
-            String[] Binary3R = ParseTwoR();
-            return insertZeroInFront(Binary3R[0] + BinaryMOP + Binary3R[1] + "01110", true, 32);
-        } else {
-            throw new Exception("ERROR: Invalid Expression in ParsePush");
-        }
-    }
-
-    String ParsePop() throws Exception {
-        AcceptSeperators();
-        if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(1).isEmpty()) { // checks if only one register exists
-            Optional<Token> register = tokenManager.MatchAndRemove(Token.TokenType.REGISTER);
-            if (register.isPresent()) {
-                return insertZeroInFront("0000" + Integer.toBinaryString((Integer.parseInt(register.get().getTokenValue()))) + "11001", true, 32);
-            }
-        } throw new Exception("ERROR: Invalid Expression in ParsePop");
-    }
-
-    String ParseLoad() throws Exception {
-        AcceptSeperators();
-        if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(1).isEmpty()) {
-            // noR (10000)
-            return ParseReturn().substring(0, 27) + "10000";
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(2).isEmpty()) {
-            // Dest Only (10001)
-            Optional<Token> register = tokenManager.MatchAndRemove(Token.TokenType.REGISTER);
-            if (register.isPresent()) {
-                Optional<Token> number = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-                if (number.isPresent()) {
-                    return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(number.get().getTokenValue())))
-                            + "0000" +convertNumToFiveBitBinary(Integer.parseInt(register.get().getTokenValue()))
-                            + "10001", true, 32);
-                } else {
-                    throw new Exception("ERROR: Invalid Expression in ParseLoad <Missing Number>");
-                }
-            } else {
-                throw new Exception("ERROR: Invalid Expression in ParseLoad <Missing Register>");
-            }
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(3).isEmpty()) {
-            // 2R (10010)
-            String[] Binary2R = ParseTwoR();
-            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (token.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(token.get().getTokenValue()))), true, 13)
-                        + Binary2R[0] + "0000" + Binary2R[1] + "10010";
-            } else {
-                throw new Exception("ERROR: Invalid Expression in ParseLoad <Missing Number>");
-            }
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(3).isEmpty()) {
-            // 3R (10011)
-            String[] Binary3R = ParseThreeR();
-            return insertZeroInFront(Binary3R[0] + Binary3R[1] + "0000" + Binary3R[2] + "10011", true, 32);
-        } else {
-            throw new Exception("ERROR: Invalid Expression in ParseLoad");
-        }
-    }
-
-    String ParseStore() throws Exception {
-        AcceptSeperators();
-        if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(2).isEmpty()) { // checks if its Dest Only (10101)
-            // Mem[Rd]  imm
-            String[] BinaryDestOnly = ParseDestOnly();
-            return BinaryDestOnly[1] + "0000" + BinaryDestOnly[0] + "10101";
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(3).isEmpty()) { // checks if its 2R (10110)
-            // mem[Rd + imm]  Rs
-            String[] Binary2R = ParseTwoR();
-            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (token.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(token.get().getTokenValue()))), true, 13)
-                        + Binary2R[0] + "0000" + Binary2R[1] + "10110";
-            } else {
-                throw new Exception("ERROR: Invalid Expression in ParseStore");
-            }
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(3).isEmpty()) { // checks if its 3R (10111)
-            // Mem[Rd + Rs1]  Rs2
-            String[] Binary3R = ParseThreeR();
-            return insertZeroInFront(Binary3R[0] + Binary3R[1] + "0000" + Binary3R[2] + "10111", true, 32);
-        } else {
-            throw new Exception("ERROR: Invalid Expression in ParseStore");
-        }
-    }
-
-    String ParseReturn() throws Exception {
-        AcceptSeperators();
-        return ParsePop();
-    }
-
-    String ParsePeek() throws Exception {
-        AcceptSeperators();
-        if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(3).isEmpty()) { // checks if its 2R (11010)
-            String[] Binary2R = ParseTwoR();
-            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (token.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(token.get().getTokenValue())))
-                        + Binary2R[0] + "0000" + Binary2R[1] + "11010", true, 32);
-            } else {
-                throw new Exception("ERROR: Invalid Expression in ParsePeek");
-            }
-        } else if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(2).isPresent() && tokenManager.Peek(2).get().getTokenType() == Token.TokenType.REGISTER &&
-                tokenManager.Peek(3).isPresent() && tokenManager.Peek(3).get().getTokenType() == Token.TokenType.NUMBER &&
-                tokenManager.Peek(4).isPresent() && tokenManager.Peek(4).get().getTokenType() == Token.TokenType.NEWLINE ||
-                tokenManager.Peek(4).isEmpty()) { // checks if its 3R (11011)
-            String[] Binary3R = ParseThreeR();
-            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (token.isPresent()) {
-                return insertZeroInFront(Integer.toBinaryString((Integer.parseInt(token.get().getTokenValue())))
-                        + Binary3R[0] + Binary3R[1] + "0000" + Binary3R[2] + "11011", true, 32);
-            } else {
-                throw new Exception("ERROR: Invalid Expression in ParsePeek");
-            }
-        } else {
-            throw new Exception("ERROR: Invalid Expression in ParsePeek");
-        }
-    }
-
-    String ParseInterrupt() throws Exception {
-        AcceptSeperators();
-        throw new Exception("ParseInterrupt: Interrupt is not a valid token");
-    }
-
-    String[] ParseCopy() {
-        AcceptSeperators();
-        return ParseDestOnly();
-    }
-
-    String ParseHalt() throws Exception {
-        AcceptSeperators();
-        return "00000";
-    }
-
-    // parses two registers
-    // returns [R1, R2]
-    String[] ParseTwoR() throws Exception {
-        AcceptSeperators();
-        Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.REGISTER);
-        String[] result = new String[2];
-        if (token.isPresent()) {
-            result[0] = convertNumToFiveBitBinary(Integer.parseInt(token.get().getTokenValue()));
-            token = tokenManager.MatchAndRemove(Token.TokenType.REGISTER);
-            if (token.isPresent()) {
-                result[1] = convertNumToFiveBitBinary(Integer.parseInt(token.get().getTokenValue()));
-            }
-        } else {
-            throw new Exception("ERROR: Invalid Statement in ParseTwoR");
-        }
-        return result;
-    }
-
-    // converts an integer to its 5-bit binary representation
-    String convertNumToFiveBitBinary(int num) {
-        String resultString = "";
-        String binaryNum = Integer.toBinaryString((num));
-        for (int i = binaryNum.length(); i < 5; i++) {
-            resultString += "0";
-        }
-        return resultString + binaryNum;
-    }
-
-    String[] ParseThreeR() throws Exception {
-        AcceptSeperators();
-        Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.REGISTER);
-        String[] result = new String[3];
-        if (token.isPresent()) {
-            result[0] = convertNumToFiveBitBinary(Integer.parseInt(token.get().getTokenValue()));
-            token = tokenManager.MatchAndRemove(Token.TokenType.REGISTER);
-            if (token.isPresent()) {
-                result[1] = convertNumToFiveBitBinary(Integer.parseInt(token.get().getTokenValue()));
-                token = tokenManager.MatchAndRemove(Token.TokenType.REGISTER);
-                if (token.isPresent()) {
-                    result[2] = convertNumToFiveBitBinary(Integer.parseInt(token.get().getTokenValue()));
+                    if (tokenManager.MatchAndRemove(Token.TokenType.OPENCURLYBRACKET).isPresent()) {
+                        AcceptSeperators();
+                        if (tokenManager.MatchAndRemove(Token.TokenType.CLOSECURLYBRACKET).isPresent()) {
+                            FunctionDefinitionNode newFunctionDefinitionNode = new FunctionDefinitionNode(functionName, parameters);
+                            BlockNode blockNode = ParseBlock();
+                            newFunctionDefinitionNode.statementNodesMutator(blockNode.getStatement());
+                            programNode.functionNodes.add(newFunctionDefinitionNode);
+                            AcceptSeperators();
+                            return true;
+                        } else { return false; }
+                    }
                 }
             }
-        } else {
-            throw new Exception("ERROR: Invalid Statement in ParseThreeR");
         }
-        return result;
+        return false;
     }
 
-    // returns [register, immediate]
-    String[] ParseDestOnly() {
-        AcceptSeperators();
-        Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.REGISTER);
-        String[] result = new String[2];
-        if (token.isPresent()) {
-            result[0] = convertNumToFiveBitBinary(Integer.parseInt(token.get().getTokenValue()));
-            token = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-            if (token.isPresent()) {
-                result[1] = insertZeroInFront(Integer.toBinaryString((Integer.parseInt(token.get().getTokenValue()))), true, 18);
+    boolean ParseAction(ProgramNode programNode) throws Exception {
+        if (tokenManager.MoreTokens()) {
+            AcceptSeperators();
+            if (tokenManager.MatchAndRemove(Token.TokenType.BEGIN).isPresent()) {
+                BlockNode beginBlock = ParseBlock();
+                programNode.beginBlockNodes.add(beginBlock);
+                AcceptSeperators();
+                return true;
+            } else if (tokenManager.MatchAndRemove(Token.TokenType.END).isPresent()) {
+                BlockNode endBlock = ParseBlock();
+                programNode.endBlockNodes.add(endBlock);
+                AcceptSeperators();
+                return true;
+            } else {
+                Optional<Node> parseOperation = ParseOperation();
+                BlockNode otherBlock = ParseBlock();
+                if (parseOperation.isPresent()) { otherBlock.setCondition(parseOperation); }
+                programNode.otherBlockNodes.add(otherBlock);
+                return false;
             }
         }
-        return result;
+        return false;
     }
 
-    String ParseNoR() throws Exception {
+    // removes the open curly bracket, and loops and parses each statement until a close curly bracket is found
+    BlockNode ParseBlock() throws Exception {
+        BlockNode newBlockNode = new BlockNode();
         AcceptSeperators();
-        Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
-        if (token.isPresent()) {
-            String withZerosInFront = insertZeroInFront(Integer.toBinaryString((Integer.parseInt(token.get().getTokenValue()))), true, 27);
-            return insertZeroInFront(withZerosInFront, false, 32);
-        } else {
-            throw new Exception("ParseNoR: Invalid expression");
+        if (tokenManager.MatchAndRemove(Token.TokenType.OPENCURLYBRACKET).isPresent()) {
+            AcceptSeperators();
+            while (tokenManager.MatchAndRemove(Token.TokenType.CLOSECURLYBRACKET).isEmpty()) {
+                Optional<StatementNode> parseStatement = ParseStatement();
+                if (parseStatement.isEmpty()) { throw new Exception("parseStatement is empty: ParseBlock"); }
+                newBlockNode.addStatement(parseStatement.get());
+                AcceptSeperators();
+            }
         }
+        return newBlockNode;
+    }
+
+    // parses the different statements possible
+    Optional<StatementNode> ParseStatement() throws Exception {
+        if (tokenManager.MatchAndRemove(Token.TokenType.CONTINUE).isPresent()) { // parses continue
+            Optional<StatementNode> parseContinue = ParseContinue();
+            if (parseContinue.isEmpty()) { throw new Exception("parseContinue is empty: ParseStatement"); }
+            return parseContinue;
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.BREAK).isPresent()) { // parses break
+            Optional<StatementNode> parseBreak = ParseBreak();
+            if (parseBreak.isEmpty()) { throw new Exception("parseContinue is empty: ParseStatement"); }
+            return parseBreak;
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.IF).isPresent()) { // parses if
+            return ParseIf();
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.FOR).isPresent()) { // parses for
+            Optional<StatementNode> parseFor = ParseFor();
+            if (parseFor.isEmpty()) { throw new Exception("parseFor is empty: ParseStatement"); }
+            return parseFor;
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.DELETE).isPresent()) { // parses delete
+            Optional<StatementNode> parseDelete = ParseDelete();
+            if (parseDelete.isEmpty()) { throw new Exception("parseDelete is empty: ParseStatement"); }
+            return parseDelete;
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.WHILE).isPresent()) { // parses while
+            Optional<StatementNode> parseWhile = ParseWhile();
+            if (parseWhile.isEmpty()) { throw new Exception("parseWhile is empty: ParseStatement"); }
+            return parseWhile;
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.DO).isPresent()) { // parses do
+            Optional<StatementNode> parseDoWhile = ParseDoWhile();
+            if (parseDoWhile.isEmpty()) { throw new Exception("parseDoWhile is empty: ParseStatement"); }
+            return parseDoWhile;
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.RETURN).isPresent()) { // parses return
+            Optional<StatementNode> parseReturn = ParseReturn();
+            if (parseReturn.isEmpty()) { throw new Exception("parseReturn is empty: ParseStatement"); }
+            return parseReturn;
+        } else {  // parses ParseOperation, if it is an instance of AssignmentNode or FunctionCallNode, return it
+            Optional<Node> parseOP = ParseOperation();
+            if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseStatement"); }
+            if (parseOP.get() instanceof AssignmentNode) {
+                return Optional.of((AssignmentNode)parseOP.get());
+            } else if (parseOP.get() instanceof FunctionCallNode) {
+                return Optional.of((FunctionCallNode)parseOP.get());
+            }
+        }
+        throw new Exception("invalid parseOP: ParseStatement");
+    }
+
+    // checks if the upcoming tokens create a function call. if it does, the create a FunctionCallNode to handle it
+    Optional<Node> ParseFunctionCall() throws Exception {
+        Optional<Token> curr = tokenManager.Peek(0);
+        LinkedList<Node> parameters = new LinkedList<>();
+        if (curr.isPresent() && curr.get().getTokenType() == Token.TokenType.GETLINE) { // parses getline call
+            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.GETLINE);
+            if (token.isEmpty()) { throw new Exception("token is Empty: parseFunctionCall<GETLINE>"); }
+            AcceptSeperators();
+            return Optional.of(new FunctionCallNode(token.get(), new LinkedList<>()));
+        } else if (curr.isPresent() && curr.get().getTokenType() == Token.TokenType.PRINT) { // parses print call
+            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.PRINT);
+            if (token.isEmpty()) { throw new Exception("token is empty: parseFunctionCall<PRINT>"); }
+            if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+                Optional<Node> parseOP = ParseOperation();
+                if (parseOP.isEmpty()) {
+                    throw new Exception("parseOP is empty: ParseFunctionCall<PRINT>");
+                }
+                parameters.add(parseOP.get());
+                if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                    AcceptSeperators();
+                    return Optional.of(new FunctionCallNode(token.get(), parameters));
+                }
+            } else {
+                Optional<Node> parseOP = ParseOperation();
+                if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseFunctionCall<PRINT>"); }
+                parameters.add(parseOP.get());
+                AcceptSeperators();
+                return Optional.of(new FunctionCallNode(token.get(), parameters));
+            }
+        } else if (curr.isPresent() && curr.get().getTokenType() == Token.TokenType.PRINTF) { // parses printf call
+            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.PRINTF);
+            if (token.isEmpty()) { throw new Exception("token is empty: parseFunctionCall<PRINTF>"); }
+            if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+                Optional<Node> parseOP = ParseOperation();
+                if (parseOP.isEmpty()) {
+                    throw new Exception("parseOP is empty: ParseFunctionCall<PRINTF>");
+                }
+                parameters.add(parseOP.get());
+                if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                    AcceptSeperators();
+                    return Optional.of(new FunctionCallNode(token.get(), parameters));
+                }
+            } else {
+                Optional<Node> parseOP = ParseOperation();
+                if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseFunctionCall<PRINTF>"); }
+                parameters.add(parseOP.get());
+                AcceptSeperators();
+                return Optional.of(new FunctionCallNode(token.get(), parameters));
+            }
+        } else if (curr.isPresent() && curr.get().getTokenType() == Token.TokenType.EXIT) { // parses exit call
+            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.EXIT);
+            if (token.isEmpty()) { throw new Exception("token is empty: parseFunctionCall<EXIT>"); }
+            if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+                Optional<Node> parseOP = ParseOperation();
+                if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseFunctionCall<EXIT>"); }
+                parameters.add(parseOP.get());
+                if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                    AcceptSeperators();
+                    return Optional.of(new FunctionCallNode(token.get(), parameters));
+                }
+            } else {
+                Optional<Node> parseOP = ParseOperation();
+                if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseFunctionCall<EXIT>"); }
+                parameters.add(parseOP.get());
+                AcceptSeperators();
+                return Optional.of(new FunctionCallNode(token.get(), parameters));
+            }
+        } else if (curr.isPresent() && curr.get().getTokenType() == Token.TokenType.NEXTFILE) { // parses nextfile call
+            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.NEXTFILE);
+            if (token.isEmpty()) { throw new Exception("token is Empty: parseFunctionCall<NEXTFILE>"); }
+            AcceptSeperators();
+            return Optional.of(new FunctionCallNode(token.get(), new LinkedList<>()));
+        } else if (curr.isPresent() && curr.get().getTokenType() == Token.TokenType.NEXT) { // parses next call
+            Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.NEXT);
+            if (token.isEmpty()) { throw new Exception("token is Empty: parseFunctionCall<NEXT>"); }
+            AcceptSeperators();
+            return Optional.of(new FunctionCallNode(token.get(), new LinkedList<>()));
+        } else { // parses user function calls
+            if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().tokenType == Token.TokenType.WORD && tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().tokenType == Token.TokenType.OPENROUNDBRACKET) {
+                Optional<Token> token = tokenManager.MatchAndRemove(Token.TokenType.WORD);
+                if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+                    while (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isEmpty()) {
+                        tokenManager.MatchAndRemove(Token.TokenType.COMMA);
+                        Optional<Node> parseOP = ParseOperation();
+                        if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseFunctionCall<WORD>"); }
+                        parameters.add(parseOP.get());
+                        if (tokenManager.MatchAndRemove(Token.TokenType.COMMA).isEmpty()) { break; }
+                    }
+                    tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET);
+                    AcceptSeperators();
+                    if (token.isEmpty()) { throw new Exception("Token is empty: Parser<ParseFunctionCall(else)>"); };
+                    return Optional.of(new FunctionCallNode(token.get(), parameters));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    // if it is continue statement, return a new ContinueNode
+    Optional<StatementNode> ParseContinue() {
+        return Optional.of(new ContinueNode());
+    }
+
+    // if it is break statement, return a new BreakNode
+    Optional<StatementNode> ParseBreak() {
+        return Optional.of(new BreakNode());
+    }
+
+    // if it is an if statement, gets the parameters, calls parseStatement to get the statements, and returns a new IfNode
+    Optional<StatementNode> ParseIf() throws Exception {
+        if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+            Optional<Node> parseOP = ParseOperation();
+            if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseIf"); }
+            if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                BlockNode blockNode = ParseBlock();
+                if (blockNode.getStatement().isEmpty()) { throw new Exception("parseBlock is empty: ParseIf"); }
+                if (tokenManager.MatchAndRemove(Token.TokenType.ELSE).isPresent()) {
+                    if (tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.IF) {
+                        Optional<StatementNode> parseStatement = ParseStatement();
+                        if (parseStatement.isEmpty()) { throw new Exception("parseStatement is empty in ParseIf"); }
+                        return Optional.of(new IfNode(parseOP.get(), blockNode, parseStatement.get()));
+                    } else {
+                        BlockNode elseBlockNode = ParseBlock();
+                        return Optional.of(new IfNode (parseOP.get(), blockNode, new IfNode(null, elseBlockNode, null)));
+                    }
+                }
+                return Optional.of(new IfNode(parseOP.get(), blockNode, null));
+            }
+        }
+        return Optional.empty();
+    }
+
+    // if it is a for statement, gets the parameters, calls parseStatement to get the statements, and returns a new ForNode
+    Optional<StatementNode> ParseFor() throws Exception {
+        if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+            Optional<Node> condition1 = ParseOperation();
+            if (condition1.isEmpty()) { throw new Exception("condition1 is empty: ParseFor"); }
+            AcceptSeperators();
+            if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                BlockNode blockNode = ParseBlock();
+                if (blockNode.getStatement().isEmpty()) { throw new Exception("blockNode is empty: ParseFor<Each>"); }
+                return Optional.of(new ForEachNode(condition1.get(), blockNode));
+            } else {
+                Optional<Node> condition2 = ParseOperation();
+                if (condition2.isEmpty()) {
+                    throw new Exception("condition2 is empty: ParseFor");
+                }
+                AcceptSeperators();
+                Optional<Node> condition3 = ParseOperation();
+                if (condition3.isEmpty()) { throw new Exception("condition3 is empty: ParseFor"); }
+                if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                    BlockNode blockNode = ParseBlock();
+                    if (blockNode.getStatement().isEmpty()) { throw new Exception("blockNode is empty: ParseFor"); }
+                    return Optional.of(new ForNode(condition1.get(), condition2.get(), condition3.get(), blockNode));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    // if it is delete statement, get the parameter, and return a new DeleteNode
+    Optional<StatementNode> ParseDelete() throws Exception {
+        if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+            Optional<Node> parseLValue = ParseLValue();
+            if (parseLValue.isEmpty()) { throw new Exception("parseLValue is empty: ParseDelete"); }
+            if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                return Optional.of(new DeleteNode(parseLValue.get()));
+            }
+        }
+        return Optional.empty();
+    }
+
+    // if it is a while statement, gets the parameter, calls parseStatement to get the statements, and returns a new WhileNode
+    Optional<StatementNode> ParseWhile() throws Exception {
+        if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+            Optional<Node> parseOP = ParseOperation();
+            if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseWhile"); }
+            if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                return Optional.of(new WhileNode(parseOP.get(), ParseBlock()));
+            }
+        }
+        return Optional.empty();
+    }
+
+    // if it is a do while statement, calls parseStatement to get the statements, gets the parameters, and returns a new DoWhileNode
+    Optional<StatementNode> ParseDoWhile() throws Exception {
+        BlockNode parseBlock = ParseBlock();
+        if (parseBlock.getStatement().isEmpty()) { throw new Exception("parseBlock is empty: ParseDoWhile"); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.WHILE).isPresent()) {
+            if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+                Optional<Node> parseOP = ParseOperation();
+                if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseDoWhile"); }
+                if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                    return Optional.of(new DoWhileNode(parseBlock, parseOP.get()));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    // if it is return statement, get the parameter, and return a new ReturnNode
+    Optional<StatementNode> ParseReturn() throws Exception {
+        Optional<Node> parseOP = ParseOperation();
+        if (parseOP.isEmpty()) { throw new Exception("parseOP is empty: ParseReturn"); }
+        return Optional.of(new ReturnNode(parseOP.get()));
+    }
+
+    Optional<Node> ParseOperation() throws Exception {
+        return ParseAssignmentOperations();
+    }
+
+    // parses all assignment statement operations
+    Optional<Node> ParseAssignmentOperations() throws Exception {
+        Optional<Node> lvalue = ParseConditionalOperations();
+        if (lvalue.isEmpty()) { throw new Exception("lvalue is empty: ParseAssignmentOperations"); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.ASSIGNEQUAL).isPresent()) {
+            return Optional.of(new AssignmentNode(lvalue.get(), new OperationNode(lvalue.get(), ParseOperation(), OperationNode.OperationList.ASSIGN)));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.MINUSEQUAL).isPresent()) {
+            return Optional.of(new AssignmentNode(lvalue.get(), new OperationNode(lvalue.get(), ParseOperation(), OperationNode.OperationList.SUBTRACT)));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.PLUSEQUAL).isPresent()) {
+            return Optional.of(new AssignmentNode(lvalue.get(), new OperationNode(lvalue.get(), ParseOperation(), OperationNode.OperationList.ADD)));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.DIVIDEEQUAL).isPresent()) {
+            return Optional.of(new AssignmentNode(lvalue.get(), new OperationNode(lvalue.get(), ParseOperation(), OperationNode.OperationList.DIVIDE)));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.MULTIPLYEQUAL).isPresent()) {
+            return Optional.of(new AssignmentNode(lvalue.get(), new OperationNode(lvalue.get(), ParseOperation(), OperationNode.OperationList.MULTIPLY)));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.MODEQUAL).isPresent()) {
+            return Optional.of(new AssignmentNode(lvalue.get(), new OperationNode(lvalue.get(), ParseOperation(), OperationNode.OperationList.MODULO)));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.POWEREQUAL).isPresent()) {
+            return Optional.of(new AssignmentNode(lvalue.get(), new OperationNode(lvalue.get(), ParseOperation(), OperationNode.OperationList.EXPONENT)));
+        }
+        return lvalue;
+    }
+
+    // parses all conditional statement operations
+    Optional<Node> ParseConditionalOperations() throws Exception {
+        Optional<Node> parseLogicalOP = ParseLogicalOperations();
+        if (parseLogicalOP.isEmpty()) { throw new Exception("ParseLogicalOP is empty: ParseConditionalOperations"); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.QUESTIONMARK).isPresent()) {
+            Optional<Node> parse2 = ParseOperation();
+            if (tokenManager.MatchAndRemove(Token.TokenType.COLON).isPresent()) {
+                return Optional.of(new TernaryNode(parseLogicalOP.get(), parse2, ParseOperation()));
+            }
+        }
+        return parseLogicalOP;
+    }
+
+    // parses all logical statement operations
+    Optional<Node> ParseLogicalOperations() throws Exception {
+        Optional<Node> parseArrayOP = ParseArrayOperations();
+        if (parseArrayOP.isEmpty()) { throw new Exception("parseArrayOP is empty: ParseLogicalOperations"); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.OR).isPresent()) {
+            return Optional.of(new OperationNode(parseArrayOP.get(), ParseOperation(), OperationNode.OperationList.OR));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.AND).isPresent()) {
+            return Optional.of(new OperationNode(parseArrayOP.get(), ParseOperation(), OperationNode.OperationList.AND));
+        }
+        return parseArrayOP;
+    }
+
+    // parses all array statement operations
+    Optional<Node> ParseArrayOperations() throws Exception {
+        Optional<Node> parseMatchOP = ParseMatchOperations();
+        if (parseMatchOP.isEmpty()) { throw new Exception("parseMatchOP is empty: ParseArrayOperations"); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.IN).isPresent()) {
+            return Optional.of(new OperationNode(parseMatchOP.get(), ParseLValue(), OperationNode.OperationList.IN));
+        }
+        return parseMatchOP;
+    }
+
+    // parses all match statement operations
+    Optional<Node> ParseMatchOperations() throws Exception {
+        Optional<Node> parseComparisonOP = ParseComparisonOperations();
+        if (parseComparisonOP.isEmpty()) { throw new Exception("parseComparisonOP is empty: ParseAssignmentOperations"); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.NOTMATCH).isPresent()) {
+            return Optional.of(new OperationNode(parseComparisonOP.get(), ParseComparisonOperations(), OperationNode.OperationList.NOTMATCH));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.MATCH).isPresent()) {
+            return Optional.of(new OperationNode(parseComparisonOP.get(), ParseComparisonOperations(), OperationNode.OperationList.MATCH));
+        }
+        return parseComparisonOP;
+    }
+
+    // parses all comparison statement operations
+    Optional<Node> ParseComparisonOperations() throws Exception {
+        Optional<Node> parseStringCon = ParseStringConcatenation();
+        if (parseStringCon.isEmpty()) { throw new Exception("parseStringCon is empty: ParseComparisonOperations"); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.LESSTHAN).isPresent()) {
+            return Optional.of(new OperationNode(parseStringCon.get(), ParseStringConcatenation(), OperationNode.OperationList.LT));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.LESSTHANEQUAL).isPresent()) {
+            return Optional.of(new OperationNode(parseStringCon.get(), ParseStringConcatenation(), OperationNode.OperationList.LE));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.NOTEQUALTO).isPresent()) {
+            return Optional.of(new OperationNode(parseStringCon.get(), ParseStringConcatenation(), OperationNode.OperationList.NE));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.EQUALTO).isPresent()) {
+            return Optional.of(new OperationNode(parseStringCon.get(), ParseStringConcatenation(), OperationNode.OperationList.EQ));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.GREATERTHAN).isPresent()) {
+            return Optional.of(new OperationNode(parseStringCon.get(), ParseStringConcatenation(), OperationNode.OperationList.GT));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.GREATERTHANEQUAL).isPresent()) {
+            return Optional.of(new OperationNode(parseStringCon.get(), ParseStringConcatenation(), OperationNode.OperationList.GE));
+        }
+        return parseStringCon;
+    }
+
+    /*
+     * Parses all string concatenation statements.
+     * Checks if there are two strings which are beside each other. If this exits, then it creates a new OperationNode
+     * which stores the left node, right node, and the operation type concatenation.
+     */
+    Optional<Node> ParseStringConcatenation() throws Exception {
+        if (tokenManager.MoreTokens() && tokenManager.Peek(0).isPresent() && tokenManager.Peek(0).get().getTokenType() == Token.TokenType.WORD) {
+            if (tokenManager.MoreTokens() && tokenManager.Peek(1).isPresent() && tokenManager.Peek(1).get().getTokenType() == Token.TokenType.WORD) {
+                Optional<Token> word1 = tokenManager.MatchAndRemove(Token.TokenType.WORD);
+                Optional<Token> word2 = tokenManager.MatchAndRemove(Token.TokenType.WORD);
+                if (word1.isEmpty()) { throw new Exception("First word is empty: Parser<ParseStringConcatenation>"); }
+                if (word2.isEmpty()) { throw new Exception("First word is empty: Parser<ParseStringConcatenation>"); }
+                return Optional.of(new OperationNode(new VariableReferenceNode(word1.get().getTokenValue()), Optional.of(new VariableReferenceNode(word2.get().getTokenValue())), OperationNode.OperationList.CONCATENATION));
+            }
+        }
+//        Optional<Node> parseLeft = ParseMathOperations();
+//        Optional<Node> parseRight = ParseMathOperations();
+//        if (parseLeft.isPresent() && parseRight.isPresent() ) {
+//            if (parseLeft.get() instanceof VariableReferenceNode && parseRight.get() instanceof VariableReferenceNode) {
+//                parseLeft =  Optional.of(new OperationNode(parseLeft.get(), parseRight, OperationNode.OperationList.CONCATENATION));
+//            }
+//        }
+        return ParseMathOperations();
+//        return parseLeft;
+    }
+
+
+    /*
+     * Parses all math statement operations.
+     * Gets the left and right expression of the statement and creates a new OperationNode which stores the left node,
+     * right node, and the math operation which is being done.
+     */
+    Optional<Node> ParseMathOperations() throws Exception {
+        Optional<Node> parseExpOP = ParseExponentOperations();
+        if (parseExpOP.isEmpty()) {  return Expression(); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.MINUS).isPresent()) {
+            return Optional.of(new OperationNode(parseExpOP.get(), Expression(), OperationNode.OperationList.SUBTRACT));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.PLUS).isPresent()) {
+            return Optional.of(new OperationNode(parseExpOP.get(), Expression(), OperationNode.OperationList.ADD));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.MOD).isPresent()) {
+            return Optional.of(new OperationNode(parseExpOP.get(), Expression(), OperationNode.OperationList.MODULO));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.DIVIDE).isPresent()) {
+            return Optional.of(new OperationNode(parseExpOP.get(), Expression(), OperationNode.OperationList.DIVIDE));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.MULTIPLY).isPresent()) {
+            return Optional.of(new OperationNode(parseExpOP.get(), Expression(), OperationNode.OperationList.MULTIPLY));
+        }
+        return parseExpOP;
+    }
+
+    Optional<Node> Factor() throws Exception {
+        Optional<Token> num = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
+        if (num.isPresent()) { return Optional.of(new ConstantNode(num.get().getTokenValue())); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) {
+            Optional<Node> exp = Expression();
+            if (exp.isEmpty()) { throw new Exception("exp is null: Factor"); }
+            if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isEmpty()) {
+                throw new Exception("Close Round Bracket is missing: Factor");
+            }
+            return exp;
+        }
+        return Optional.empty();
+
+        // call exponent if its there then return that else return bottom level
+    }
+
+    Optional<Node> Term() throws Exception {
+        Optional<Node> left = Factor();
+        if (left.isEmpty()) { throw new Exception("left is empty: Term"); }
+        do {
+            Optional<Token> op = tokenManager.MatchAndRemove(Token.TokenType.MULTIPLY);
+            if (op.isEmpty()) { op = tokenManager.MatchAndRemove(Token.TokenType.DIVIDE); }
+            if (op.isEmpty()) { op = tokenManager.MatchAndRemove(Token.TokenType.MOD); }
+            if (op.isEmpty()) { return left; }
+            Optional<Node> right = Factor();
+            left = Optional.of(new MathOpNode(left.get(), op, right));
+        } while (true);
+    }
+
+    Optional<Node> Expression() throws Exception {
+        Optional<Node> left = Term();
+        if (left.isEmpty()) { throw new Exception("left is empty: Expression"); }
+        do {
+            Optional<Token> op = tokenManager.MatchAndRemove(Token.TokenType.PLUS);
+            if (op.isEmpty()) { op = tokenManager.MatchAndRemove(Token.TokenType.MINUS); }
+            if (op.isEmpty()) { return left; }
+            Optional<Node> right = Term();
+            left = Optional.of(new MathOpNode(left.get(), op, right));
+        } while (true);
+    }
+
+    // parses all exponent statement operations
+    Optional<Node> ParseExponentOperations() throws Exception {
+        Optional<Node> lvalue = ParseBottomLevel();
+        if (lvalue.isEmpty()) { throw new Exception("lvalue is empty: ParseExponentOperations"); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.POWER).isPresent()) {
+            Optional<Node> p = ParseOperation();
+            return Optional.of(new OperationNode(lvalue.get(), p, OperationNode.OperationList.EXPONENT));
+        }
+        return lvalue;
+    }
+
+    // parses post increment and decrement statement operations
+    Optional<Node> ParsePostOperations() throws Exception {
+        AcceptSeperators();
+        Optional<Node> lvalue = ParseLValue();
+        if (lvalue.isEmpty()) { throw new Exception("lvalue is empty: ParsePostOperations"); }
+        if (tokenManager.MatchAndRemove(Token.TokenType.INCREMENTONE).isPresent()) {
+            return Optional.of(new AssignmentNode(lvalue.get(), new OperationNode(lvalue.get(), OperationNode.OperationList.POSTINC)));
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.DECREMENTONE).isPresent()) {
+            return Optional.of(new AssignmentNode(lvalue.get(), new OperationNode(lvalue.get(), OperationNode.OperationList.POSTDEC)));
+        }
+        return lvalue;
+    }
+
+    // parses all basic bottom level statement operations
+    Optional<Node> ParseBottomLevel() throws Exception {
+        Optional<Token> curr = tokenManager.Peek(0);
+        Optional<Token> tempToken;
+        if (!tokenManager.MoreTokens()) { throw new Exception("No More Tokens: ParseBottomLevel."); }
+        if (curr.isEmpty()) { throw new Exception("No More Tokens: ParseBottomLevel."); }
+        if (curr.get().getTokenType() == Token.TokenType.STRINGLITERAL) { // STRINGLITERAL -> ConstantNode(value)
+            tempToken = tokenManager.MatchAndRemove(Token.TokenType.STRINGLITERAL);
+            if (tempToken.isEmpty()) { throw new Exception("tempToken is empty: ParseBottomLevel"); }
+            ConstantNode cNode = new ConstantNode(tempToken.get().getTokenValue());
+            return Optional.of(cNode);
+        } else if (curr.get().getTokenType() == Token.TokenType.NUMBER) { // NUMBER -> ConstantNode(value)
+            tempToken = tokenManager.MatchAndRemove(Token.TokenType.NUMBER);
+            if (tempToken.isEmpty()) { throw new Exception("tempToken is empty: ParseBottomLevel"); }
+            ConstantNode cNode = new ConstantNode(tempToken.get().getTokenValue());
+            return Optional.of(cNode);
+        } else if (curr.get().getTokenType() == Token.TokenType.REGEX) { // PATTERN -> PatterNode(value)
+            tempToken = tokenManager.MatchAndRemove(Token.TokenType.REGEX);
+            if (tempToken.isEmpty()) { throw new Exception("tempToken is empty: ParseBottomLevel"); }
+            PatternNode pNode = new PatternNode(tempToken.get().getTokenValue());
+            return Optional.of(pNode);
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.OPENROUNDBRACKET).isPresent()) { // LPAREN ParseOperation() RPAREN -> result of ParseOperation
+            Optional<Node> parseOP = ParseOperation();
+            if (parseOP.isEmpty()) { throw new Exception("Brackets: Parse Operation is Empty"); }
+            if (tokenManager.MatchAndRemove(Token.TokenType.CLOSEROUNDBRACKET).isPresent()) {
+                return parseOP;
+            }
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.NOT).isPresent()) { // NOT ParseOperation() -> Operation(result of ParseOperation, NOT)
+            Optional<Node> parseOP = ParseOperation();
+            if (parseOP.isEmpty()) { throw new Exception("Not: Parse Operation is Empty"); }
+            OperationNode opNode = new OperationNode(parseOP.get(), OperationNode.OperationList.NOT);
+            return Optional.of(opNode);
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.MINUS).isPresent()) { // MINUS ParseOperation() -> Operation(result of ParseOperation, UNARYNEG)
+            Optional<Node> parseOP = ParseOperation();
+            if (parseOP.isEmpty()) { throw new Exception("Minus: Parse Operation is Empty"); }
+            OperationNode opNode = new OperationNode(parseOP.get(), OperationNode.OperationList.UNARYNEG);
+            return Optional.of(opNode);
+        } else if (tokenManager.MatchAndRemove(Token.TokenType.PLUS).isPresent()) { // PLUS ParseOperation() -> Operation(result of ParseOperation, UNARYPOS)
+            Optional<Node> parseOP = ParseOperation();
+            if (parseOP.isEmpty()) { throw new Exception("Plus: Parse Operation is Empty"); }
+            OperationNode opNode = new OperationNode(parseOP.get(), OperationNode.OperationList.UNARYPOS);
+            return Optional.of(opNode);
+        } else if (curr.get().getTokenType() == Token.TokenType.INCREMENTONE) { // INCREMENT ParseOperation() -> Operation(result of ParseOperation, PREINC)
+            tokenManager.MatchAndRemove(Token.TokenType.INCREMENTONE);
+            Optional<Node> parseOP = ParseOperation();
+            if (parseOP.isEmpty()) { throw new Exception("IncrementOne: Parse Operation is Empty"); }
+            AssignmentNode opNode = new AssignmentNode(parseOP.get(), new OperationNode(parseOP.get(), OperationNode.OperationList.PREINC));
+            return Optional.of(opNode);
+        } else if (curr.get().getTokenType() == Token.TokenType.DECREMENTONE) { // DECREMENT ParseOperation() -> Operation(result of ParseOperation, PREDEC)
+            tokenManager.MatchAndRemove(Token.TokenType.DECREMENTONE);
+            Optional<Node> parseOP = ParseOperation();
+            if (parseOP.isEmpty()) { throw new Exception("DecrementOne: Parse Operation is Empty"); }
+            AssignmentNode opNode = new AssignmentNode(parseOP.get(), new OperationNode(parseOP.get(), OperationNode.OperationList.PREDEC));
+            return Optional.of(opNode);
+        }
+
+        Optional<Node> parseFunctionCall = ParseFunctionCall();
+        if (parseFunctionCall.isPresent()) {
+            return parseFunctionCall;
+        }
+        Optional<Node> postOP = ParsePostOperations();
+        if (postOP.isPresent()) {
+            return postOP;
+        }
+        return ParseLValue();
+    }
+
+    // parses all low level statement operations
+    Optional<Node> ParseLValue() throws Exception {
+        Optional<Token> curr = tokenManager.Peek(0);
+        if (!tokenManager.MoreTokens()) { throw new Exception("No More Tokens: ParseLValue."); }
+        if (curr.isEmpty()) { throw new Exception("No More Tokens: ParseLValue."); }
+        if (curr.get().getTokenType() == Token.TokenType.DOLLAR) { // pattern check for DOLLAR + ParseBottomLevel()
+            tokenManager.MatchAndRemove(Token.TokenType.DOLLAR);
+            Optional<Node> parseBottomLvl = ParseBottomLevel();
+            if (parseBottomLvl.isEmpty()) { throw new Exception("Bottom Level is Empty."); }
+            OperationNode newOpNode = new OperationNode(parseBottomLvl.get(), OperationNode.OperationList.DOLLAR);
+            return Optional.of(newOpNode);
+        } else if (curr.get().getTokenType() == Token.TokenType.WORD) {
+            Optional<Token> tempToken = tokenManager.MatchAndRemove(Token.TokenType.WORD);
+            if (tempToken.isEmpty()) { throw new Exception("tempToken is empty: ParseLValue<WORD>"); }
+            if (tokenManager.MatchAndRemove(Token.TokenType.OPENSQUAREBRACKET).isPresent()) { // pattern check for WORD + OPENARRAY + ParseOperation() + CLOSEARRAY
+                Optional<Node> parseOP = ParseOperation();
+                if (parseOP.isEmpty()) { throw new Exception("Empty Parse Operation"); }
+                if (tokenManager.MatchAndRemove(Token.TokenType.CLOSESQUAREBRACKET).isPresent()) {
+                    VariableReferenceNode newVRN = new VariableReferenceNode(tempToken.get().getTokenValue(), parseOP);
+                    return Optional.of(newVRN);
+                }
+            } else { // pattern check for WORD (and no OPENARRAY)
+                VariableReferenceNode newVRN = new VariableReferenceNode(tempToken.get().getTokenValue());
+                return Optional.of(newVRN);
+            }
+        }
+        return Optional.empty();
     }
 }

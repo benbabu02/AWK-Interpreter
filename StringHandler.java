@@ -1,5 +1,9 @@
-package csi404.assignment7;
-
+/*
+ * A StringHandler class which implements methods
+ * that can be used to work through a string input.
+ *
+ * @author Benjamin Babu (bbabu@albany.edu)
+ */
 public class StringHandler {
     private String awkFile;
     private int index;

@@ -1,10 +1,14 @@
-package csi404.assignment7;
-
 import java.util.LinkedList;
 import java.util.Optional;
 
+/*
+ * The TokenManager class which contains a list of tokens.
+ * TokenManager methods are used to go through the list of tokens.
+ *
+ * @author Benjamin Babu (bbabu@albany.edu)
+ */
 public class TokenManager {
-    private LinkedList<Token> tokens;
+     private LinkedList<Token> tokens;
 
     public TokenManager(LinkedList<Token> inputTokens) { this.tokens = inputTokens; }
 
